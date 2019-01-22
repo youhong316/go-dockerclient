@@ -1,47 +1,36 @@
 .PHONY: \
 	all \
-	vendor \
-	lint \
-	vet \
-	fmt \
+	staticcheck \
 	fmtcheck \
 	pretest \
 	test \
-	cov \
-	clean
+	integration
 
-SRCS = $(shell git ls-files '*.go' | grep -v '^external/')
-PKGS = ./. ./testing
+DEP_TOOL ?= dep
 
 all: test
 
-vendor:
-	@ go get -v github.com/mjibson/party
-	party -d external -c -u
-
-lint:
-	@ go get -v github.com/golang/lint/golint
-	$(foreach file,$(SRCS),golint $(file) || exit;)
-
-vet:
-	@-go get -v golang.org/x/tools/cmd/vet
-	$(foreach pkg,$(PKGS),go vet $(pkg);)
-
-fmt:
-	gofmt -w $(SRCS)
+staticcheck:
+	GO111MODULE=off go get -v honnef.co/go/tools/cmd/staticcheck
+	staticcheck ./...
 
 fmtcheck:
-	$(foreach file,$(SRCS),gofmt $(file) | diff -u $(file) - || exit;)
+	if [ -z "$${SKIP_FMT_CHECK}" ]; then [ -z "$$(gofmt -s -d *.go ./testing | tee /dev/stderr)" ]; fi
 
-pretest: lint vet fmtcheck
+testdeps:
+ifeq ($(DEP_TOOL), dep)
+	GO111MODULE=off go get -u github.com/golang/dep/cmd/dep
+	dep ensure -v
+else
+	go mod download
+endif
 
-test: pretest
-	$(foreach pkg,$(PKGS),go test $(pkg) || exit;)
+pretest: testdeps staticcheck fmtcheck
 
-cov:
-	@ go get -v github.com/axw/gocov/gocov
-	@ go get golang.org/x/tools/cmd/cover
-	gocov test | gocov report
+gotest:
+	go test -race ./...
 
-clean:
-	$(foreach pkg,$(PKGS),go clean $(pkg) || exit;)
+test: pretest gotest
+
+integration:
+	go test -tags docker_integration -run TestIntegration -v
